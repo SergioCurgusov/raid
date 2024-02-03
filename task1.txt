@@ -1,0 +1,101 @@
+1) Изменяем исходный Vagrantfile под своё рабочее место (настройки сети, размер дисков), добавляем пятый диск.
+
+2) Смотрим, какие диски есть в системе:
+lsblk
+у нас есть sda с разделом sda1 и точкой монтирования /, и ещё 4 диска без разделов: sdb, sdc, sdd, sde, sdf
+
+3) Занулим суперблоки:
+mdadm --zero-superblock --force /dev/sd{b,c,d,e,f}
+
+4) создаём рейд-массив:
+mdadm --create --verbose /dev/md0 -l 6 -n 5 /dev/sd{b,c,d,e,f}
+
+5) проверяем, что рейд собрался нормально:
+cat /proc/mdstat
+mdadm -D /dev/md0
+
+6) Убедимся, что информация по рейду верная:
+mdadm --detail --scan --verbose
+
+создаём mdadm.conf
+mkdir /etc/mdadm
+echo "DEVICE partitions" > /etc/mdadm/mdadm.conf
+mdadm --detail --scan --verbose | awk '/ARRAY/{print}' >> /etc/mdadm/mdadm.conf
+
+Содержимое mdadm.conf
+DEVICE partitions
+ARRAY /dev/md0 level=raid6 num-devices=5 metadata=1.2 name=otuslinux:0 UUID=b87d0b14:0149ce20:11540d7e:c1e8555f
+
+Проверим:
+reboot
+lsblk
+
+7) Ломаем рейд через --fail:
+mdadm /dev/md0 --fail /dev/sdf
+
+Проверяем:
+cat /proc/mdstat 
+Personalities : [raid6] [raid5] [raid4] 
+md0 : active raid6 sde[3] sdb[0] sdc[1] sdd[2] sdf[4](F)
+      147456 blocks super 1.2 level 6, 512k chunk, algorithm 2 [5/4] [UUUU_]
+
+mdadm -D /dev/md0
+Number   Major   Minor   RaidDevice State
+       0       8       16        0      active sync   /dev/sdb
+       1       8       32        1      active sync   /dev/sdc
+       2       8       48        2      active sync   /dev/sdd
+       3       8       64        3      active sync   /dev/sde
+       -       0        0        4      removed
+       4       8       80        -      faulty   /dev/sdf
+
+Удаляем проблемный диск из массива:
+mdadm /dev/md0 --remove /dev/sdf
+
+Добавим тот же диск в рейд:
+mdadm /dev/md0 --add /dev/sdf
+
+Смотрим прогресс ребилда:
+cat /proc/mdstat
+
+8) Создадим таблицу разделов на рейд-массиве:
+parted -s /dev/md0 mklabel gpt
+
+Создаём разделы:
+parted /dev/md0 mkpart primary ext4 0% 20%
+parted /dev/md0 mkpart primary ext4 20% 40%
+parted /dev/md0 mkpart primary ext4 40% 60%
+parted /dev/md0 mkpart primary ext4 60% 80%
+parted /dev/md0 mkpart primary ext4 80% 100%
+
+Форматируем их в ext4:
+for i in $(seq 1 5); do mkfs.ext4 /dev/md0p$i; done
+
+Смонтируем их:
+mkdir -p /media/raid/part{1,2,3,4,5}
+for i in $(seq 1 5); do mount /dev/md0p$i /media/raid/part$i; done
+проверяем:
+df -h
+Filesystem      Size  Used Avail Use% Mounted on
+devtmpfs        489M     0  489M   0% /dev
+tmpfs           496M     0  496M   0% /dev/shm
+tmpfs           496M  6.7M  489M   2% /run
+tmpfs           496M     0  496M   0% /sys/fs/cgroup
+/dev/sda1        40G  3.5G   37G   9% /
+tmpfs           100M     0  100M   0% /run/user/1000
+/dev/md0p1       27M  704K   25M   3% /media/raid/part1
+/dev/md0p2       27M  704K   25M   3% /media/raid/part2
+/dev/md0p3       27M  704K   25M   3% /media/raid/part3
+/dev/md0p4       27M  695K   24M   3% /media/raid/part4
+/dev/md0p5       27M  695K   24M   3% /media/raid/part5
+
+
+
+
+
+
+
+
+
+
+
+
