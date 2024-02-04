@@ -29,7 +29,7 @@ if cat /proc/mdstat | grep active
         # Создаём разметку
         parted -s /dev/md0 mklabel gpt
         echo "таблица разделов успешно создана" >> /var/log/raid_create.log
-        # создаём 5 разделов
+        # создаём 2 раздела
         parted /dev/md0 mkpart primary ext4 0% 20% -s
         parted /dev/md0 mkpart primary ext4 20% 100% -s
         # Форматирем их
